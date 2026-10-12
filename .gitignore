@@ -1,0 +1,27 @@
+# 环境与密钥（禁止提交）
+.env
+
+# 运行时数据
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+dist/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
