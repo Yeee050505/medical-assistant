@@ -97,9 +97,7 @@ def audit_log(
     q = select(AuditLog).where(*conds)
     total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
     rows = list(
-        db.execute(
-            q.order_by(desc(AuditLog.id)).offset((page - 1) * size).limit(size)
-        ).scalars()
+        db.execute(q.order_by(desc(AuditLog.id)).offset((page - 1) * size).limit(size)).scalars()
     )
     items = [
         {

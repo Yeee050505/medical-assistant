@@ -74,9 +74,7 @@ def stream_with_resilience(provider, messages: list[dict]) -> Iterator[str]:
             raise
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            logger.warning(
-                "LLM 调用失败（第 %d/%d 次）: %s", attempt + 1, RETRY_TIMES + 1, exc
-            )
+            logger.warning("LLM 调用失败（第 %d/%d 次）: %s", attempt + 1, RETRY_TIMES + 1, exc)
             continue
         breaker.record_success()
         yield first

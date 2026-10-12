@@ -20,8 +20,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    for path in (settings.upload_dir, settings.rag_doc_dir):
-        __import__("pathlib").Path(path).mkdir(parents=True, exist_ok=True)
+    for path in (settings.upload_dir_path, settings.rag_doc_dir_path):
+        path.mkdir(parents=True, exist_ok=True)
     yield
 
 

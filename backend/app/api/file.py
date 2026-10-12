@@ -1,5 +1,4 @@
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, File, Request, UploadFile
 
@@ -33,7 +32,7 @@ async def upload_file(
 
     file_id = f"file-{uuid.uuid4().hex[:16]}"
     suffix = ALLOWED_TYPES[file.content_type]
-    target = Path(settings.upload_dir) / f"{file_id}{suffix}"
+    target = settings.upload_dir_path / f"{file_id}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
 

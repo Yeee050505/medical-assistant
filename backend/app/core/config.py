@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "medical_docs"
     rag_top_k: int = 5
     rag_min_score: float = 0.18
+    rag_ingest_async: bool = False  # true 时走 Celery（需启动 worker）
 
     # LLM
     llm_provider: str = "mock"
@@ -72,6 +73,22 @@ class Settings(BaseSettings):
         if not self.redis_password:
             return f"redis://{self.redis_host}:{self.redis_port}/0"
         return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
+
+    @staticmethod
+    def _resolve(path_str: str) -> Path:
+        """相对路径按项目根解析，避免 worker/服务进程 cwd 差异。"""
+        p = Path(path_str)
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parents[3] / p
+        return p
+
+    @property
+    def upload_dir_path(self) -> Path:
+        return self._resolve(self.upload_dir)
+
+    @property
+    def rag_doc_dir_path(self) -> Path:
+        return self._resolve(self.rag_doc_dir)
 
 
 @lru_cache

@@ -25,10 +25,9 @@ def record_usage(
     try:
         prompt_tokens = estimate_tokens(prompt_text)
         completion_tokens = estimate_tokens(completion_text)
-        cost = (
-            prompt_tokens / 1000 * float(settings.llm_price_prompt)
-            + completion_tokens / 1000 * float(settings.llm_price_completion)
-        )
+        cost = prompt_tokens / 1000 * float(
+            settings.llm_price_prompt
+        ) + completion_tokens / 1000 * float(settings.llm_price_completion)
         with SessionLocal() as db:
             db.add(
                 LlmUsage(

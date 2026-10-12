@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal, get_db
 from app.core.deps import require_permission
 from app.core.response import bad_request, not_found, success
@@ -58,11 +59,20 @@ async def upload_doc(
 
         status = "success"
         error = ""
-        try:
-            ingest_file(doc_id, drugName.strip(), file_path)
-        except Exception as exc:  # noqa: BLE001
-            status = "failed"
-            error = str(exc)[:500]
+        if settings.rag_ingest_async:
+            from app.tasks.ingest import ingest_doc_task
+
+            ingest_doc_task.apply_async(
+                args=[doc_id, drugName.strip(), file_path, task_id],
+                task_id=task_id,
+            )
+            status = "processing"
+        else:
+            try:
+                ingest_file(doc_id, drugName.strip(), file_path)
+            except Exception as exc:  # noqa: BLE001
+                status = "failed"
+                error = str(exc)[:500]
 
         row = db.execute(select(RagDoc).where(RagDoc.doc_id == doc_id)).scalar_one()
         row.status = status
@@ -153,12 +163,14 @@ def doc_status(
     row.enabled = enabled
     db.commit()
 
+    from app.services.rag.bm25 import invalidate
     from app.services.rag.store import set_doc_enabled
 
     try:
         set_doc_enabled(body.docId, bool(enabled))
     except Exception as exc:  # noqa: BLE001
         logger.warning("同步 Qdrant 启用状态失败 doc=%s: %s", body.docId, exc)
+    invalidate()
     return success(request, {"docId": row.doc_id, "status": body.status})
 
 

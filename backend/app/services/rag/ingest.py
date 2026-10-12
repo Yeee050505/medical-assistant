@@ -37,11 +37,15 @@ def ingest_file(doc_id: str, drug_name: str, file_path: str) -> int:
     delete_doc_points(doc_id)
     ensure_collection()
     upsert_chunks(doc_id, drug_name, chunks, vectors)
+
+    from app.services.rag.bm25 import invalidate
+
+    invalidate()
     return len(chunks)
 
 
 def save_upload(file_bytes: bytes, doc_id: str, suffix: str) -> str:
-    target = Path(settings.rag_doc_dir) / f"{doc_id}{suffix}"
+    target = settings.rag_doc_dir_path / f"{doc_id}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(file_bytes)
     return str(target)
