@@ -19,12 +19,12 @@ class Settings(BaseSettings):
     mysql_database: str = "medical"
 
     # Redis
-    redis_host: str = "localhost"
+    redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_password: str = "redis123"
 
     # Qdrant
-    qdrant_url: str = "http://localhost:6333"
+    qdrant_url: str = "http://127.0.0.1:6333"
 
     # JWT
     jwt_secret: str = "change-me-in-production"
@@ -34,6 +34,16 @@ class Settings(BaseSettings):
 
     # 网关限流
     rate_limit_qps: int = 10
+
+    # Embedding / RAG
+    embedding_provider: str = "mock"
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = ""
+    embedding_dim: int = 64
+    qdrant_collection: str = "medical_docs"
+    rag_top_k: int = 5
+    rag_min_score: float = 0.18
 
     # LLM
     llm_provider: str = "mock"

@@ -6,7 +6,7 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from app.api import auth, chat, file
+from app.api import auth, chat, file, rag
 from app.core.config import settings
 from app.core.database import check_mysql
 from app.core.gateway import install_gateway_middlewares
@@ -45,6 +45,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONR
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(file.router, prefix="/api/v1/file", tags=["file"])
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["rag"])
 
 
 @app.get("/api/v1/health")

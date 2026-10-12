@@ -14,3 +14,7 @@ class LLMProvider(Protocol):
     def parse_image(self, image_path: str) -> str:
         """解析内网图片，返回结构化文本。"""
         ...
+
+    def rewrite_query(self, query: str, history: list[str] | None = None) -> str:
+        """在线 RAG：结合多轮历史将口语 query 改写为检索式 query。"""
+        ...

@@ -1,27 +1,6 @@
 import io
 
-import pytest
-from app.main import app
-from fastapi.testclient import TestClient
-
 BASE = "/api/v1"
-
-
-@pytest.fixture()
-def client():
-    with TestClient(app) as c:
-        yield c
-
-
-@pytest.fixture()
-def auth_headers(client):
-    r = client.post(
-        f"{BASE}/auth/login",
-        json={"username": "admin", "password": "Admin@123"},
-    )
-    assert r.status_code == 200
-    token = r.json()["data"]["token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def test_health(client):

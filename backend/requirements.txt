@@ -11,3 +11,4 @@ httpx>=0.28
 qdrant-client>=1.19
 python-multipart>=0.0.18
 sse-starlette>=2.1
+pdfplumber>=0.11

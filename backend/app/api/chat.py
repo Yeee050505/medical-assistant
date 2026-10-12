@@ -50,8 +50,19 @@ def _parse_images(image_list: list[str], db: Session) -> str:
     return "\n".join(parts)
 
 
-def _build_messages(history: list[ChatMessage], user_text: str) -> list[dict]:
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+def _build_messages(
+    history: list[ChatMessage],
+    user_text: str,
+    rag_docs: list[dict] | None = None,
+) -> list[dict]:
+    system = SYSTEM_PROMPT
+    if rag_docs:
+        ctx = "\n".join(
+            f"[{i + 1}]《{d.get('drugName', '')}》{d.get('chunkContent', '')[:300]}"
+            for i, d in enumerate(rag_docs)
+        )
+        system += f"\n以下是召回的药品说明书片段：\n{ctx}\n仅基于以上片段作答，片段不足时提示就医。"
+    messages: list[dict] = [{"role": "system", "content": system}]
     for m in history[-10:]:
         messages.append({"role": m.role, "content": m.content})
     messages.append({"role": "user", "content": user_text})
@@ -83,8 +94,8 @@ def create_session(
 ):
     img_text = _parse_images(body.imageList, db)
     query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
-    rag_docs = search_chunks(query, top_k=5)
-    answer = _gen_answer(_build_messages([], query))
+    rag_docs = search_chunks(query)
+    answer = _gen_answer(_build_messages([], query, rag_docs))
 
     sess = ChatSession(
         session_id=f"sess-{uuid.uuid4().hex[:16]}",
@@ -137,8 +148,9 @@ def send_message(
     )
     img_text = _parse_images(body.imageList, db)
     query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
-    rag_docs = search_chunks(query, top_k=5)
-    messages = _build_messages(history, query)
+    history_texts = [m.content for m in history if m.role == "user"][-3:]
+    rag_docs = search_chunks(query, history=history_texts)
+    messages = _build_messages(history, query, rag_docs)
 
     trace_id = get_trace_id(request)
     db.add(

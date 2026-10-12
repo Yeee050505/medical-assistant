@@ -70,3 +70,29 @@ class OpenAICompatProvider:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
+
+    def rewrite_query(self, query: str, history: list[str] | None = None) -> str:
+        if not history:
+            return query
+        sys_prompt = (
+            "你是检索 query 改写助手。结合对话历史，将用户口语化的追问改写为"
+            "独立、完整、含药品名称或症状关键词的检索 query，30 字以内，只输出改写结果。"
+        )
+        hist = "\n".join(f"- {h[:80]}" for h in history[-3:])
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"对话历史：\n{hist}\n本轮问题：{query}"},
+            ],
+            "max_tokens": 100,
+            "temperature": 0.0,
+        }
+        resp = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers=self._headers(),
+            json=payload,
+            timeout=20.0,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
