@@ -1,8 +1,8 @@
-# README.md
+# 多模态医疗辅助问诊系统
 
-项目：多模态医疗辅助问诊系统（RAG + 国内大模型 API 企业版）
+[![CI](https://github.com/Yeee050505/medical-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Yeee050505/medical-assistant/actions/workflows/ci.yml)
 
-## 多模态医疗辅助问诊系统
+项目：RAG + 国内大模型 API 企业版
 
 基于 RAG + 国内合规大模型 API 构建的药品科普辅助问诊平台。
 
@@ -19,15 +19,15 @@
 ### 容量与规模预期
 
 - 注册用户约 3000 人，日活约 300，峰值 QPS < 50
-- 单台 4C8G 服务器即可承载，不引入 Kubernetes，Docker Compose 统一编排
+- 单台 4C8G 服务器即可承载，不引入 Kubernetes，MySQL / Redis / Qdrant 本机服务常驻部署
 
 ### 技术栈
 
-- 后端：Python3.12、FastAPI、Celery、Redis
+- 后端：Python3.12、FastAPI、Celery（RAG 异步入库）、Redis
 - 数据库：MySQL8.0、Qdrant 向量库
-- RAG：bge-large-zh、bge-reranker-large、BM25 + 向量混合检索
-- 前端：Vue3 + Element Plus
-- 部署：Docker Compose，可观测：OpenTelemetry、Prometheus
+- RAG：BM25 + 向量混合检索（RRF 融合）、embedding Provider 可切换（mock / OpenAI 兼容 API）
+- 前端：Vue3 + Element Plus（SSE 流式渲染）
+- 部署：Nginx 反代 + uvicorn / Celery worker，可观测：用量统计 + 审计日志 + Prometheus
 
 ### 环境依赖
 
@@ -99,8 +99,35 @@ pip install -r backend/requirements.txt
 uvicorn app.main:app --app-dir backend --port 8000
 ```
 
-5. 访问前端页面：`http://127.0.0.1:8080`
-6. API 接口地址：`http://127.0.0.1:8000/api/v1`
+5. 启动前端（另开终端）：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+6. 可选：启用 Celery 异步入库（`.env` 设 `RAG_INGEST_ASYNC=true` 后启动 worker）：
+
+```bash
+# 工作目录 backend/（或任意目录 + PYTHONPATH 指向 backend）
+celery -A app.core.celery_app:celery_app worker --pool=solo -l info
+```
+
+7. 访问前端页面：`http://localhost:8080`，API 地址：`http://127.0.0.1:8000/api/v1`
+
+### 测试
+
+```bash
+# 后端（需 MySQL / Redis / Qdrant 本机服务 + init.sql 已执行）
+pytest tests -q
+ruff check backend tests
+
+# 前端构建验证
+cd frontend && npm run build
+```
+
+每次 push 自动执行 GitHub Actions CI（后端 pytest + ruff、前端 vite build，含 MySQL/Redis/Qdrant 服务容器）。
 
 ### 部署教程
 
