@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import uuid
@@ -37,6 +38,18 @@ class TraceMiddleware(BaseHTTPMiddleware):
             request.url.path,
             response.status_code,
             cost_ms,
+        )
+        from app.core.audit import write_audit
+
+        await asyncio.to_thread(
+            write_audit,
+            trace_id=trace_id,
+            method=request.method,
+            path=request.url.path,
+            code=response.status_code,
+            ip=request.client.host if request.client else "",
+            cost_ms=cost_ms,
+            auth_header=request.headers.get("Authorization", ""),
         )
         return response
 

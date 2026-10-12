@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from collections.abc import Iterator
 
@@ -14,7 +15,9 @@ from app.core.middleware import get_trace_id
 from app.core.response import not_found, success
 from app.models.chat import ChatMessage, ChatSession, FileObject
 from app.services.llm.factory import get_provider
+from app.services.llm.resilience import DEGRADE_MSG, LLMUnavailable, stream_with_resilience
 from app.services.rag import search_chunks
+from app.services.usage import record_usage
 
 router = APIRouter()
 
@@ -35,7 +38,7 @@ class ChatBody(BaseModel):
     imageList: list[str] = []
 
 
-def _parse_images(image_list: list[str], db: Session) -> str:
+def _parse_images(image_list: list[str], db: Session, trace_id: str, user_id: int) -> str:
     if not image_list:
         return ""
     provider = get_provider()
@@ -46,7 +49,24 @@ def _parse_images(image_list: list[str], db: Session) -> str:
         ).scalar_one_or_none()
         if row is None:
             continue
-        parts.append(provider.parse_image(row.file_path))
+        start = time.perf_counter()
+        status = "success"
+        try:
+            text = provider.parse_image(row.file_path)
+        except Exception:
+            status = "failed"
+            raise
+        finally:
+            record_usage(
+                trace_id=trace_id,
+                user_id=user_id,
+                api_type="vl",
+                prompt_text=f"image:{row.file_path}",
+                completion_text=text if status == "success" else "",
+                duration_ms=int((time.perf_counter() - start) * 1000),
+                status=status,
+            )
+        parts.append(text)
     return "\n".join(parts)
 
 
@@ -80,9 +100,32 @@ def _get_session(db: Session, session_id: str, user: dict) -> ChatSession:
     return sess
 
 
-def _gen_answer(messages: list[dict]) -> str:
+def _gen_answer(messages: list[dict], trace_id: str, user_id: int) -> str:
     provider = get_provider()
-    return "".join(provider.stream_chat(messages)) + "\n" + DISCLAIMER
+    prompt_text = json.dumps(messages, ensure_ascii=False)
+    start = time.perf_counter()
+    status = "success"
+    text = ""
+    try:
+        text = "".join(stream_with_resilience(provider, messages))
+    except LLMUnavailable:
+        status = "degraded"
+    except Exception:
+        status = "failed"
+        raise
+    finally:
+        record_usage(
+            trace_id=trace_id,
+            user_id=user_id,
+            api_type="llm",
+            prompt_text=prompt_text,
+            completion_text=text,
+            duration_ms=int((time.perf_counter() - start) * 1000),
+            status=status,
+        )
+    if status == "degraded":
+        return DEGRADE_MSG + "\n" + DISCLAIMER
+    return text + "\n" + DISCLAIMER
 
 
 @router.post("/session/create")
@@ -92,10 +135,12 @@ def create_session(
     user: CurrentUser,
     db: Session = Depends(get_db),
 ):
-    img_text = _parse_images(body.imageList, db)
+    trace_id = get_trace_id(request)
+    user_id = int(user["sub"])
+    img_text = _parse_images(body.imageList, db, trace_id, user_id)
     query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
     rag_docs = search_chunks(query)
-    answer = _gen_answer(_build_messages([], query, rag_docs))
+    answer = _gen_answer(_build_messages([], query, rag_docs), trace_id, user_id)
 
     sess = ChatSession(
         session_id=f"sess-{uuid.uuid4().hex[:16]}",
@@ -146,13 +191,14 @@ def send_message(
             select(ChatMessage).where(ChatMessage.session_id == sess.id).order_by(ChatMessage.id)
         ).scalars()
     )
-    img_text = _parse_images(body.imageList, db)
+    trace_id = get_trace_id(request)
+    user_id = int(user["sub"])
+    img_text = _parse_images(body.imageList, db, trace_id, user_id)
     query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
     history_texts = [m.content for m in history if m.role == "user"][-3:]
     rag_docs = search_chunks(query, history=history_texts)
     messages = _build_messages(history, query, rag_docs)
 
-    trace_id = get_trace_id(request)
     db.add(
         ChatMessage(
             session_id=sess.id,
@@ -166,7 +212,7 @@ def send_message(
 
     accept = request.headers.get("accept", "")
     if "text/event-stream" not in accept:
-        answer = _gen_answer(messages)
+        answer = _gen_answer(messages, trace_id, user_id)
         db.add(
             ChatMessage(
                 session_id=sess.id,
@@ -186,6 +232,9 @@ def send_message(
 
     def gen() -> Iterator[str]:
         parts: list[str] = []
+        prompt_text = json.dumps(messages, ensure_ascii=False)
+        start = time.perf_counter()
+        status = "success"
         try:
             for chunk in provider.stream_chat(messages):
                 parts.append(chunk)
@@ -210,8 +259,22 @@ def send_message(
                     "disclaimer": DISCLAIMER,
                 },
             )
+        except LLMUnavailable as exc:
+            status = "degraded"
+            yield _sse("error", {"code": 50001, "msg": str(exc)})
         except Exception as exc:  # noqa: BLE001
+            status = "failed"
             yield _sse("error", {"code": 50001, "msg": f"生成失败：{exc}"})
+        finally:
+            record_usage(
+                trace_id=trace_id,
+                user_id=user_id,
+                api_type="llm",
+                prompt_text=prompt_text,
+                completion_text="".join(parts),
+                duration_ms=int((time.perf_counter() - start) * 1000),
+                status=status,
+            )
 
     return StreamingResponse(
         gen(),

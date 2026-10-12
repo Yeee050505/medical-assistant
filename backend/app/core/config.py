@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     llm_model: str = ""
     vl_api_key: str = ""
     vl_model: str = ""
+    llm_price_prompt: float = 0.0  # 元 / 1K tokens
+    llm_price_completion: float = 0.0  # 元 / 1K tokens
 
     # storage
     upload_dir: str = "./data/uploads"
