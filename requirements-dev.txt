@@ -1,0 +1,2 @@
+locust>=2.31
+pytest-cov>=5.0

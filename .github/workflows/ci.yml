@@ -48,7 +48,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt ruff
+        run: pip install -r backend/requirements.txt ruff pytest-cov
 
       - name: Init database schema and seed data
         env:
@@ -56,10 +56,10 @@ jobs:
         run: mysql -h 127.0.0.1 -u medical medical < docker/mysql/init.sql
 
       - name: Lint
-        run: ruff check backend tests
+        run: ruff check backend tests scripts
 
       - name: Test
-        run: pytest tests -q
+        run: pytest tests -q --cov=app --cov-report=term --cov-fail-under=75
 
   frontend:
     runs-on: ubuntu-latest
