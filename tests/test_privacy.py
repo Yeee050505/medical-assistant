@@ -2,10 +2,7 @@ from app.services.privacy import desensitize, desensitize_messages
 
 
 def test_desensitize_sensitive_entities():
-    text = (
-        "我叫张三，身份证110101199001011234，"
-        "手机号13912345678，银行卡6222021234567890123"
-    )
+    text = "我叫张三，身份证110101199001011234，手机号13912345678，银行卡6222021234567890123"
     out = desensitize(text)
     assert "110101199001011234" not in out
     assert "110101********1234" in out

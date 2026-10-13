@@ -57,7 +57,9 @@ def _unit_vec(token: str, dim: int) -> tuple[float, ...]:
 
 class EmbeddingProvider(Protocol):
     name: str
-    dim: int
+
+    @property
+    def dim(self) -> int: ...
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 

@@ -44,9 +44,7 @@ def test_non_admin_forbidden_from_monitor(client):
         r = _login(client, username="it-user-perm", password="User@123")
         assert r.status_code == 200
         token = r.json()["data"]["token"]
-        resp = client.get(
-            f"{BASE}/monitor/llm/cost", headers={"Authorization": f"Bearer {token}"}
-        )
+        resp = client.get(f"{BASE}/monitor/llm/cost", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 403
     finally:
         with SessionLocal() as db:

@@ -48,7 +48,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt ruff pytest-cov
+        run: pip install -r backend/requirements.txt -r requirements-dev.txt ruff
 
       - name: Init database schema and seed data
         env:
@@ -57,6 +57,9 @@ jobs:
 
       - name: Lint
         run: ruff check backend tests scripts
+
+      - name: Type check
+        run: mypy
 
       - name: Test
         run: pytest tests -q --cov=app --cov-report=term --cov-fail-under=75

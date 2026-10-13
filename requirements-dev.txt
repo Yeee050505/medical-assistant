@@ -1,2 +1,4 @@
 locust>=2.31
 pytest-cov>=5.0
+mypy>=1.11
+types-PyJWT>=2.0

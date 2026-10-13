@@ -15,3 +15,12 @@ ignore = ["B008"]  # FastAPI Depends 惯用法
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["backend"]
+
+[tool.mypy]
+files = ["backend/app"]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+no_implicit_optional = true
+

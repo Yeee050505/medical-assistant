@@ -26,15 +26,11 @@ def test_sse_stream_emits_delta_and_done(client, auth_headers):
     assert "event: delta" in body
     assert "event: done" in body
     events = [
-        line.split(":", 1)[1].strip()
-        for line in body.splitlines()
-        if line.startswith("event: ")
+        line.split(":", 1)[1].strip() for line in body.splitlines() if line.startswith("event: ")
     ]
     assert "delta" in events and "done" in events
     delta_payloads = [
-        json.loads(line.split(":", 1)[1])
-        for line in body.splitlines()
-        if line.startswith("data: ")
+        json.loads(line.split(":", 1)[1]) for line in body.splitlines() if line.startswith("data: ")
     ]
     assert any(p.get("content") for p in delta_payloads)
 

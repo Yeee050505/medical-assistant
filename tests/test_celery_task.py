@@ -25,9 +25,7 @@ def _make_doc(task_id: str) -> tuple[str, str]:
                 uploader_id=1,
             )
         )
-        db.add(
-            TaskRecord(task_id=task_id, doc_id=doc_id, type="doc_ingest", status="processing")
-        )
+        db.add(TaskRecord(task_id=task_id, doc_id=doc_id, type="doc_ingest", status="processing"))
         db.commit()
     return doc_id, path
 

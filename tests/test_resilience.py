@@ -70,9 +70,7 @@ def test_outbound_messages_desensitized():
     """外发前脱敏：provider 收到的 content 已去除手机号等敏感信息。"""
     provider = FlakyProvider()
     list(
-        stream_with_resilience(
-            provider, [{"role": "user", "content": "我手机号13812345678，头疼"}]
-        )
+        stream_with_resilience(provider, [{"role": "user", "content": "我手机号13812345678，头疼"}])
     )
     sent = provider.seen_messages[0][0]["content"]
     assert "13812345678" not in sent

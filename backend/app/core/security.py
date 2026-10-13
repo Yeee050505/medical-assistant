@@ -41,8 +41,8 @@ def create_token(
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
     }
-    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    return token, ttl
+    raw: str | bytes = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return (raw.decode() if isinstance(raw, bytes) else raw), ttl
 
 
 def decode_token(token: str) -> dict:

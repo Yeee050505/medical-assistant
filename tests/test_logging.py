@@ -7,8 +7,13 @@ from app.core.logging import JsonFormatter, trace_id_var
 def test_json_formatter_emits_structured_record():
     formatter = JsonFormatter()
     record = logging.LogRecord(
-        name="app.test", level=logging.INFO, pathname=__file__, lineno=1,
-        msg="hello %s", args=("world",), exc_info=None,
+        name="app.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="hello %s",
+        args=("world",),
+        exc_info=None,
     )
     line = formatter.format(record)
     payload = json.loads(line)
@@ -23,8 +28,13 @@ def test_json_formatter_carries_context_trace_id():
     try:
         formatter = JsonFormatter()
         record = logging.LogRecord(
-            name="app.test", level=logging.WARNING, pathname=__file__, lineno=1,
-            msg="with trace", args=None, exc_info=None,
+            name="app.test",
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=1,
+            msg="with trace",
+            args=None,
+            exc_info=None,
         )
         payload = json.loads(formatter.format(record))
         assert payload["traceId"] == "trace-abc-123"
@@ -40,8 +50,13 @@ def test_json_formatter_includes_exception():
         import sys
 
         record = logging.LogRecord(
-            name="app.test", level=logging.ERROR, pathname=__file__, lineno=1,
-            msg="failed", args=None, exc_info=sys.exc_info(),
+            name="app.test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="failed",
+            args=None,
+            exc_info=sys.exc_info(),
         )
         line = formatter.format(record)
     payload = json.loads(line)

@@ -6,6 +6,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     VectorParams,
 )
@@ -37,8 +38,10 @@ def ensure_collection() -> str:
             collection_name=name,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
-        client.create_payload_index(name, "doc_id", field_schema="keyword")
-        client.create_payload_index(name, "enabled", field_schema="bool")
+        client.create_payload_index(
+            name, "doc_id", field_schema=PayloadSchemaType.KEYWORD
+        )
+        client.create_payload_index(name, "enabled", field_schema=PayloadSchemaType.BOOL)
     return name
 
 

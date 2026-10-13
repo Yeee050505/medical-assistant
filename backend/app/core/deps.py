@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, cast
 
 import jwt
 import redis as redis_lib
@@ -9,14 +9,14 @@ from app.core.response import forbidden, unauthorized
 from app.core.security import decode_token
 from app.models.user import ROLE_PERMISSIONS
 
-_redis = redis_lib.Redis.from_url(settings.redis_url, socket_connect_timeout=2, protocol=2)
+_redis = redis_lib.Redis.from_url(settings.redis_url, socket_connect_timeout=2)
 
 BLACKLIST_PREFIX = "token:bl:"
 
 
 def _is_blacklisted(jti: str) -> bool:
     try:
-        return _redis.exists(BLACKLIST_PREFIX + jti) > 0
+        return cast(int, _redis.exists(BLACKLIST_PREFIX + jti)) > 0
     except redis_lib.RedisError:
         return False
 
