@@ -53,3 +53,8 @@ class MockProvider:
             if ctx and ctx not in q:
                 q = f"{ctx} {q}".strip()
         return q or query
+
+    def classify_intent(self, query: str, history: list[str] | None = None) -> str:
+        from app.services.intent import classify_by_rules
+
+        return classify_by_rules(query, history)

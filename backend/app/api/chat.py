@@ -14,6 +14,8 @@ from app.core.deps import CurrentUser
 from app.core.middleware import get_trace_id
 from app.core.response import not_found, success
 from app.models.chat import ChatMessage, ChatSession, FileObject
+from app.services.hot_cache import lookup_hot, remember_answer
+from app.services.intent import classify
 from app.services.llm.factory import get_provider
 from app.services.llm.resilience import DEGRADE_MSG, LLMUnavailable, stream_with_resilience
 from app.services.rag import search_chunks
@@ -100,6 +102,53 @@ def _get_session(db: Session, session_id: str, user: dict) -> ChatSession:
     return sess
 
 
+def _classify_intent(
+    body: ChatBody, history: list[ChatMessage], trace_id: str, user_id: int
+) -> str:
+    history_texts = [m.content for m in history if m.role == "user"]
+    start = time.perf_counter()
+    try:
+        intent = classify(body.userDesc, has_images=bool(body.imageList), history=history_texts)
+        status = "success"
+    except Exception:  # noqa: BLE001
+        intent, status = "qa", "failed"
+    finally:
+        record_usage(
+            trace_id=trace_id,
+            user_id=user_id,
+            api_type="intent",
+            prompt_text=body.userDesc[:200],
+            completion_text=intent,
+            duration_ms=int((time.perf_counter() - start) * 1000),
+            status=status,
+        )
+    return intent
+
+
+def _lookup_hot(
+    body: ChatBody, intent: str, db: Session, trace_id: str, user_id: int
+) -> dict | None:
+    if intent in ("chat", "image"):
+        return None
+    start = time.perf_counter()
+    hot = lookup_hot(body.userDesc, db)
+    if hot:
+        record_usage(
+            trace_id=trace_id,
+            user_id=user_id,
+            api_type="hot",
+            prompt_text=body.userDesc[:200],
+            completion_text=hot["answer"][:200],
+            duration_ms=int((time.perf_counter() - start) * 1000),
+            status="success",
+        )
+    return hot
+
+
+def _hot_answer(hot: dict) -> str:
+    return hot["answer"].rstrip() + "\n" + DISCLAIMER
+
+
 def _gen_answer(messages: list[dict], trace_id: str, user_id: int) -> str:
     provider = get_provider()
     prompt_text = json.dumps(messages, ensure_ascii=False)
@@ -137,10 +186,18 @@ def create_session(
 ):
     trace_id = get_trace_id(request)
     user_id = int(user["sub"])
-    img_text = _parse_images(body.imageList, db, trace_id, user_id)
-    query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
-    rag_docs = search_chunks(query)
-    answer = _gen_answer(_build_messages([], query, rag_docs), trace_id, user_id)
+    intent = _classify_intent(body, [], trace_id, user_id)
+    hot = _lookup_hot(body, intent, db, trace_id, user_id)
+
+    if hot:
+        answer = _hot_answer(hot)
+        rag_docs: list[dict] = []
+    else:
+        img_text = _parse_images(body.imageList, db, trace_id, user_id)
+        query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
+        rag_docs = [] if intent == "chat" else search_chunks(query)
+        answer = _gen_answer(_build_messages([], query, rag_docs), trace_id, user_id)
+        remember_answer(body.userDesc, body.userDesc[:20], answer.removesuffix(DISCLAIMER).strip())
 
     sess = ChatSession(
         session_id=f"sess-{uuid.uuid4().hex[:16]}",
@@ -169,7 +226,13 @@ def create_session(
     db.commit()
     return success(
         request,
-        {"sessionId": sess.session_id, "answer": answer, "referenceDocs": rag_docs},
+        {
+            "sessionId": sess.session_id,
+            "answer": answer,
+            "referenceDocs": rag_docs,
+            "intent": intent,
+            "hotTitle": hot["title"] if hot else "",
+        },
     )
 
 
@@ -193,10 +256,69 @@ def send_message(
     )
     trace_id = get_trace_id(request)
     user_id = int(user["sub"])
+    intent = _classify_intent(body, history, trace_id, user_id)
+    hot = _lookup_hot(body, intent, db, trace_id, user_id)
+
+    accept = request.headers.get("accept", "")
+
+    # 热点命中：跳过 RAG 与 LLM 生成，直接返回预置/缓存回答
+    if hot:
+        answer = _hot_answer(hot)
+        db.add(
+            ChatMessage(
+                session_id=sess.id,
+                role="user",
+                content=body.userDesc,
+                trace_id=trace_id,
+            )
+        )
+        sess.updated_at = func.now()
+        db.add(
+            ChatMessage(
+                session_id=sess.id,
+                role="assistant",
+                content=answer,
+                reference_docs=[],
+                trace_id=trace_id,
+            )
+        )
+        db.commit()
+        if "text/event-stream" not in accept:
+            return success(
+                request,
+                {
+                    "sessionId": session_id,
+                    "answer": answer,
+                    "referenceDocs": [],
+                    "intent": intent,
+                    "hotTitle": hot["title"],
+                },
+            )
+
+        def hot_gen() -> Iterator[str]:
+            yield _sse("intent", {"intent": intent})
+            yield _sse("hot", {"title": hot["title"], "source": hot["source"]})
+            yield _sse("delta", {"content": answer})
+            yield _sse(
+                "done",
+                {
+                    "sessionId": session_id,
+                    "referenceDocs": [],
+                    "disclaimer": DISCLAIMER,
+                    "hotTitle": hot["title"],
+                },
+            )
+
+        return StreamingResponse(
+            hot_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     img_text = _parse_images(body.imageList, db, trace_id, user_id)
     query = body.userDesc + (f"\n[图片解析]\n{img_text}" if img_text else "")
     history_texts = [m.content for m in history if m.role == "user"][-3:]
-    rag_docs = search_chunks(query, history=history_texts)
+    rag_docs = [] if intent == "chat" else search_chunks(query, history=history_texts)
     messages = _build_messages(history, query, rag_docs)
 
     db.add(
@@ -210,7 +332,6 @@ def send_message(
     sess.updated_at = func.now()
     db.commit()
 
-    accept = request.headers.get("accept", "")
     if "text/event-stream" not in accept:
         answer = _gen_answer(messages, trace_id, user_id)
         db.add(
@@ -223,14 +344,24 @@ def send_message(
             )
         )
         db.commit()
+        if intent in ("qa", "followup", "other"):
+            remember_answer(
+                body.userDesc, body.userDesc[:20], answer.removesuffix(DISCLAIMER).strip()
+            )
         return success(
             request,
-            {"sessionId": session_id, "answer": answer, "referenceDocs": rag_docs},
+            {
+                "sessionId": session_id,
+                "answer": answer,
+                "referenceDocs": rag_docs,
+                "intent": intent,
+            },
         )
 
     provider = get_provider()
 
     def gen() -> Iterator[str]:
+        yield _sse("intent", {"intent": intent})
         parts: list[str] = []
         prompt_text = json.dumps(messages, ensure_ascii=False)
         start = time.perf_counter()
@@ -251,6 +382,8 @@ def send_message(
                     )
                 )
                 s.commit()
+            if intent in ("qa", "followup", "other"):
+                remember_answer(body.userDesc, body.userDesc[:20], "".join(parts).strip())
             yield _sse(
                 "done",
                 {

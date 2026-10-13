@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     rag_min_score: float = 0.18
     rag_ingest_async: bool = False  # true 时走 Celery（需启动 worker）
 
+    # 意图路由：off=恒 qa；rule=关键词规则；llm=小模型分类（失败回退规则）
+    intent_strategy: str = "rule"
+
+    # 热点缓存
+    hot_cache_enabled: bool = True
+    hot_auto_ttl_seconds: int = 24 * 3600  # 自动积累 TTL（0=关闭自动积累）
+
     # LLM
     llm_provider: str = "mock"
     llm_base_url: str = ""

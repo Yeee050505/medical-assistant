@@ -96,3 +96,31 @@ class OpenAICompatProvider:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"].strip()
+
+    def classify_intent(self, query: str, history: list[str] | None = None) -> str:
+        sys_prompt = (
+            "你是意图分类器。判断用户问题属于哪一类，只输出一个词，不要输出其它内容。"
+            "类别：qa=药品/症状/用药咨询；chat=问候闲聊；followup=对上文的追问；"
+            "other=其它。"
+        )
+        hist = "\n".join(f"- {h[:60]}" for h in (history or [])[-2:])
+        user_content = (
+            f"对话历史：\n{hist}\n本轮问题：{query[:200]}" if hist else f"问题：{query[:200]}"
+        )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "max_tokens": 10,
+            "temperature": 0.0,
+        }
+        resp = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers=self._headers(),
+            json=payload,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip().lower()

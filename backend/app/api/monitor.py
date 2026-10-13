@@ -1,7 +1,9 @@
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,9 @@ from app.core.database import get_db
 from app.core.deps import require_permission
 from app.core.metrics import metrics_payload
 from app.core.response import bad_request, success
+from app.models.hot_topic import HotTopic
 from app.models.monitor import AuditLog, LlmUsage, LlmUsageDaily
+from app.services.hot_cache import invalidate_topics
 
 router = APIRouter()
 
@@ -163,3 +167,105 @@ def audit_log(
         for r in rows
     ]
     return success(request, {"list": items, "total": total, "page": page, "size": size})
+
+
+class HotTopicBody(BaseModel):
+    title: str
+    keywords: list[str]
+    answer: str
+    priority: int = 0
+    enabled: bool = True
+
+
+def _topic_dict(r: HotTopic) -> dict:
+    try:
+        keywords = json.loads(r.keywords or "[]")
+    except ValueError:
+        keywords = []
+    return {
+        "id": r.id,
+        "title": r.title,
+        "keywords": keywords,
+        "answer": r.answer,
+        "priority": r.priority,
+        "enabled": bool(r.enabled),
+        "updatedAt": r.updated_at.isoformat() if r.updated_at else None,
+    }
+
+
+@router.get("/hot-topic")
+def hot_topic_list(
+    request: Request,
+    user: dict = Depends(require_permission("monitor:admin")),
+    db: Session = Depends(get_db),
+):
+    rows = list(
+        db.execute(select(HotTopic).order_by(desc(HotTopic.priority), HotTopic.id)).scalars()
+    )
+    return success(request, {"list": [_topic_dict(r) for r in rows]})
+
+
+@router.post("/hot-topic")
+def hot_topic_create(
+    request: Request,
+    body: HotTopicBody,
+    user: dict = Depends(require_permission("monitor:admin")),
+    db: Session = Depends(get_db),
+):
+    if not body.title.strip() or not body.answer.strip():
+        raise bad_request("标题与回答不能为空")
+    if not [k for k in body.keywords if k.strip()]:
+        raise bad_request("至少配置一个关键词")
+    row = HotTopic(
+        title=body.title.strip()[:64],
+        keywords=json.dumps([k.strip() for k in body.keywords if k.strip()], ensure_ascii=False),
+        answer=body.answer.strip(),
+        priority=body.priority,
+        enabled=body.enabled,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    invalidate_topics()
+    return success(request, _topic_dict(row))
+
+
+@router.put("/hot-topic/{topic_id}")
+def hot_topic_update(
+    request: Request,
+    topic_id: int,
+    body: HotTopicBody,
+    user: dict = Depends(require_permission("monitor:admin")),
+    db: Session = Depends(get_db),
+):
+    row = db.get(HotTopic, topic_id)
+    if row is None:
+        raise bad_request("热点词条不存在")
+    if not body.title.strip() or not body.answer.strip():
+        raise bad_request("标题与回答不能为空")
+    if not [k for k in body.keywords if k.strip()]:
+        raise bad_request("至少配置一个关键词")
+    row.title = body.title.strip()[:64]
+    row.keywords = json.dumps([k.strip() for k in body.keywords if k.strip()], ensure_ascii=False)
+    row.answer = body.answer.strip()
+    row.priority = body.priority
+    row.enabled = body.enabled
+    db.commit()
+    invalidate_topics()
+    return success(request, _topic_dict(row))
+
+
+@router.delete("/hot-topic/{topic_id}")
+def hot_topic_delete(
+    request: Request,
+    topic_id: int,
+    user: dict = Depends(require_permission("monitor:admin")),
+    db: Session = Depends(get_db),
+):
+    row = db.get(HotTopic, topic_id)
+    if row is None:
+        raise bad_request("热点词条不存在")
+    db.delete(row)
+    db.commit()
+    invalidate_topics()
+    return success(request, {"deleted": topic_id})

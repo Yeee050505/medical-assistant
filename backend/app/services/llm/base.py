@@ -18,3 +18,7 @@ class LLMProvider(Protocol):
     def rewrite_query(self, query: str, history: list[str] | None = None) -> str:
         """在线 RAG：结合多轮历史将口语 query 改写为检索式 query。"""
         ...
+
+    def classify_intent(self, query: str, history: list[str] | None = None) -> str:
+        """意图分类：返回 qa/chat/followup/image/other 之一。"""
+        ...
