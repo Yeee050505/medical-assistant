@@ -23,11 +23,75 @@
 
 ### 技术栈
 
-- 后端：Python3.12、FastAPI、Celery（RAG 异步入库）、Redis
+- 后端：Python3.12、FastAPI、Celery（RAG 异步入库 + beat 定时任务）、Redis
 - 数据库：MySQL8.0、Qdrant 向量库
 - RAG：BM25 + 向量混合检索（RRF 融合）、embedding Provider 可切换（mock / OpenAI 兼容 API）
 - 前端：Vue3 + Element Plus（SSE 流式渲染）
 - 部署：Nginx 反代 + uvicorn / Celery worker，可观测：用量统计 + 审计日志 + Prometheus
+
+### 系统架构
+
+```mermaid
+flowchart LR
+    subgraph clients["用户侧"]
+        U[浏览器]
+    end
+    subgraph app["应用层（FastAPI）"]
+        GW["网关：traceId / 滑动窗口限流 / 审计"]
+        AUTH[auth JWT+RBAC]
+        CHAT[chat 问答·SSE]
+        RAG["rag 混合检索<br/>BM25+向量 RRF"]
+        MON["monitor 用量/审计/metrics"]
+    end
+    subgraph store["存储层"]
+        MY[(MySQL 8.0)]
+        RD[("Redis<br/>缓存/限流/黑名单")]
+        QD[(Qdrant)]
+    end
+    subgraph async["异步任务（Celery）"]
+        CW[worker 离线入库]
+        CB["beat 定时<br/>用量聚合·超额告警·Qdrant快照"]
+    end
+    EXT["国内大模型 API<br/>LLM / VL / Embedding"]
+    U --> FE["Vue3 + Element Plus"]
+    FE -->|HTTP / SSE| GW
+    GW --> AUTH & CHAT & RAG & MON
+    AUTH & MON --> MY
+    CHAT --> RD
+    RAG --> QD
+    RAG --> RD
+    CHAT -->|改写·生成·解析| EXT
+    RAG -->|embedding| EXT
+    CW --> QD
+    CB --> MY
+    CW -.任务投递.- RD
+```
+
+### RAG + SSE 问答时序
+
+```mermaid
+sequenceDiagram
+    participant F as 前端 Vue3
+    participant A as FastAPI
+    participant R as Redis
+    participant Q as Qdrant + BM25
+    participant L as 大模型 API
+    F->>A: POST /chat/session/{id}/message (Accept: text/event-stream)
+    A->>A: 滑动窗口限流 → 生成 traceId
+    A->>L: rewrite_query（结合近 3 轮历史）
+    A->>R: 查检索结果缓存(60s)
+    alt 缓存未命中
+        A->>Q: 向量召回 top40(过阈值) + BM25 top40
+        Q-->>A: RRF(k=60) 融合 top5
+        A->>R: 回写缓存
+    end
+    A->>A: 组装 prompt（免责+片段）+ 外发脱敏
+    loop 流式生成
+        A-->>F: event: delta
+    end
+    A-->>F: event: done
+    A->>A: 落库 chat_message + llm_usage + audit_log
+```
 
 ### 环境依赖
 
@@ -107,30 +171,41 @@ npm install
 npm run dev
 ```
 
-6. 可选：启用 Celery 异步入库（`.env` 设 `RAG_INGEST_ASYNC=true` 后启动 worker）：
+6. 可选：启用 Celery 异步入库与 beat 定时任务（`.env` 设 `RAG_INGEST_ASYNC=true` 后启动 worker，`-B` 内嵌调度器）：
 
 ```bash
 # 工作目录 backend/（或任意目录 + PYTHONPATH 指向 backend）
-celery -A app.core.celery_app:celery_app worker --pool=solo -l info
+celery -A app.core.celery_app:celery_app worker --pool=solo -l info -B
+# beat 任务：每日 01:05 用量聚合、01:15 超额告警（LLM_DAILY_TOKEN_QUOTA）、02:00 Qdrant 快照（保留 7 份）
 ```
 
-7. 访问前端页面：`http://localhost:8080`，API 地址：`http://127.0.0.1:8000/api/v1`
+7. 可选：一键演示数据（3 份样例说明书 + 示例对话会话）：
+
+```bash
+python scripts/seed_demo.py
+```
+
+8. 访问前端页面：`http://localhost:8080`，API 地址：`http://127.0.0.1:8000/api/v1`
 
 ### 测试
 
 ```bash
 # 后端（需 MySQL / Redis / Qdrant 本机服务 + init.sql 已执行）
-pytest tests -q --cov=app --cov-report=term   # 44 个用例，覆盖率先 84%，CI 门禁 75%
-ruff check backend tests scripts
+pytest tests -q --cov=app --cov-report=term   # 63 个用例，覆盖率 88%，CI 门禁 75%
+ruff check backend tests scripts               # lint
+mypy                                           # 类型检查（44 文件 0 错误）
 
 # RAG 检索质量评估（内置 12 条标注用例，输出 recall@5 报告）
-python scripts/rag_eval.py --write            # 报告写入 docs/rag-eval.md
+python scripts/rag_eval.py --write             # 报告写入 docs/rag-eval.md
 
 # 前端构建验证
 cd frontend && npm run build
+
+# 可选：git 钩子（ruff + mypy）
+pre-commit install
 ```
 
-每次 push 自动执行 GitHub Actions CI（后端 ruff + pytest 覆盖率门禁 ≥75%、前端 vite build，含 MySQL/Redis/Qdrant 服务容器）。
+每次 push 自动执行 GitHub Actions CI（ruff + mypy + pytest 覆盖率门禁 ≥75%、前端 vite build，含 MySQL/Redis/Qdrant 服务容器）。
 
 CI 中的 `tests/test_rag_eval.py` 是检索质量门禁：样例用例 hybrid recall@5 < 0.8 即失败，防止检索退化。
 

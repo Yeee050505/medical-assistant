@@ -33,3 +33,4 @@ storage/
 # 压测中间产物
 .locust*
 __pycache__/
+snapshots/
