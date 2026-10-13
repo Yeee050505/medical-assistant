@@ -92,6 +92,99 @@
           </el-dialog>
         </el-tab-pane>
 
+        <el-tab-pane label="热点词条" name="hot">
+          <el-card shadow="never">
+            <div class="list-row">
+              <el-button type="primary" @click="openTopicDialog()">新增词条</el-button>
+              <span class="picked">
+                命中规则：问题包含任一关键词即返回预置回答（跳过检索与大模型），优先级高者优先
+              </span>
+            </div>
+            <el-table :data="topics" v-loading="topicLoading" style="margin-top: 10px">
+              <el-table-column prop="title" label="标题" min-width="160" />
+              <el-table-column label="关键词" min-width="240">
+                <template #default="{ row }">
+                  <el-tag
+                    v-for="k in row.keywords"
+                    :key="k"
+                    size="small"
+                    type="info"
+                    style="margin: 2px 4px 2px 0"
+                  >
+                    {{ k }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="priority" label="优先级" width="80" />
+              <el-table-column label="启用" width="80">
+                <template #default="{ row }">
+                  <el-switch
+                    :model-value="row.enabled"
+                    @change="(v) => toggleTopic(row, v)"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="更新时间" width="170">
+                <template #default="{ row }">
+                  {{ (row.updatedAt || '').replace('T', ' ').slice(0, 19) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="140">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openTopicDialog(row)">编辑</el-button>
+                  <el-button link type="danger" @click="removeTopic(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+
+          <el-dialog
+            v-model="topicVisible"
+            :title="topicForm.id ? '编辑热点词条' : '新增热点词条'"
+            width="640px"
+            :close-on-click-modal="false"
+          >
+            <el-form label-width="80px">
+              <el-form-item label="标题" required>
+                <el-input v-model="topicForm.title" maxlength="64" placeholder="如：流感高发期常用抗病毒药" />
+              </el-form-item>
+              <el-form-item label="关键词" required>
+                <el-select
+                  v-model="topicForm.keywords"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  :reserve-keyword="false"
+                  placeholder="输入关键词后回车，可加多个同义词"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item label="优先级">
+                <el-input-number v-model="topicForm.priority" :min="0" :max="9999" />
+                <span class="picked" style="margin-left: 10px">多词条命中时取优先级高者</span>
+              </el-form-item>
+              <el-form-item label="启用">
+                <el-switch v-model="topicForm.enabled" />
+              </el-form-item>
+              <el-form-item label="预置回答" required>
+                <el-input
+                  v-model="topicForm.answer"
+                  type="textarea"
+                  rows="8"
+                  maxlength="4000"
+                  show-word-limit
+                  placeholder="命中后直接返回的科普回答（建议末尾含就医提示）"
+                />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="topicVisible = false">取消</el-button>
+              <el-button type="primary" :loading="topicSaving" @click="saveTopic">保存</el-button>
+            </template>
+          </el-dialog>
+        </el-tab-pane>
+
         <el-tab-pane label="监控与审计" name="monitor">
           <el-card shadow="never">
             <div class="list-row">
@@ -169,7 +262,7 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import request from '../api'
 import TopBar from '../components/TopBar.vue'
@@ -212,8 +305,14 @@ async function uploadDoc() {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     const d = res.data
-    if (d.status === 'success') ElMessage.success('入库成功')
-    else ElMessage.error(`入库失败：${d.status}`)
+    if (d.status === 'success') {
+      ElMessage.success('入库成功')
+    } else if (d.status === 'processing') {
+      ElMessage.info('已提交异步入库，等待处理…')
+      await pollTask(d.taskId)
+    } else {
+      ElMessage.error(`入库失败：${d.status}`)
+    }
     form.drugName = ''
     form.version = ''
     pickedFile.value = null
@@ -225,6 +324,27 @@ async function uploadDoc() {
   } finally {
     uploading.value = false
   }
+}
+
+async function pollTask(taskId, maxRetry = 30) {
+  for (let i = 0; i < maxRetry; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    try {
+      const res = await request.get(`/rag/task/${taskId}`)
+      const s = res.data.status
+      if (s === 'success') {
+        ElMessage.success('异步入库完成')
+        return
+      }
+      if (s === 'failed') {
+        ElMessage.error(`入库失败：${res.data.errorMsg || '未知错误'}`)
+        return
+      }
+    } catch {
+      return
+    }
+  }
+  ElMessage.warning('入库仍在处理中，可稍后刷新列表查看')
 }
 
 async function loadDocs() {
@@ -322,10 +442,107 @@ async function loadLogs() {
   }
 }
 
+const topics = ref([])
+const topicLoading = ref(false)
+const topicVisible = ref(false)
+const topicSaving = ref(false)
+const topicForm = ref({ id: 0, title: '', keywords: [], answer: '', priority: 0, enabled: true })
+
+async function loadTopics() {
+  topicLoading.value = true
+  try {
+    const res = await request.get('/monitor/hot-topic')
+    topics.value = res.data.list
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    topicLoading.value = false
+  }
+}
+
+function openTopicDialog(row) {
+  topicForm.value = row
+    ? {
+        id: row.id,
+        title: row.title,
+        keywords: [...(row.keywords || [])],
+        answer: row.answer,
+        priority: row.priority,
+        enabled: row.enabled,
+      }
+    : { id: 0, title: '', keywords: [], answer: '', priority: 0, enabled: true }
+  topicVisible.value = true
+}
+
+async function saveTopic() {
+  const f = topicForm.value
+  if (!f.title.trim() || !f.answer.trim() || !f.keywords.filter((k) => k.trim()).length) {
+    ElMessage.warning('标题、关键词、预置回答均不能为空')
+    return
+  }
+  topicSaving.value = true
+  try {
+    const payload = {
+      title: f.title.trim(),
+      keywords: f.keywords.map((k) => k.trim()).filter(Boolean),
+      answer: f.answer.trim(),
+      priority: f.priority,
+      enabled: f.enabled,
+    }
+    if (f.id) {
+      await request.put(`/monitor/hot-topic/${f.id}`, payload)
+      ElMessage.success('已更新')
+    } else {
+      await request.post('/monitor/hot-topic', payload)
+      ElMessage.success('已新增')
+    }
+    topicVisible.value = false
+    await loadTopics()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    topicSaving.value = false
+  }
+}
+
+async function toggleTopic(row, value) {
+  try {
+    await request.put(`/monitor/hot-topic/${row.id}`, {
+      title: row.title,
+      keywords: row.keywords,
+      answer: row.answer,
+      priority: row.priority,
+      enabled: value,
+    })
+    row.enabled = value
+    ElMessage.success(value ? '已启用' : '已停用')
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+async function removeTopic(row) {
+  try {
+    await ElMessageBox.confirm(`确认删除热点词条「${row.title}」？`, '删除确认', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await request.delete(`/monitor/hot-topic/${row.id}`)
+    ElMessage.success('已删除')
+    await loadTopics()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
 onMounted(() => {
   loadDocs()
   loadCost()
   loadLogs()
+  loadTopics()
 })
 </script>
 
