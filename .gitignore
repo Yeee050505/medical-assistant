@@ -25,3 +25,11 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Qdrant 本地数据（误在项目根生成）
+storage/
+.qdrant-initialized
+
+# 压测中间产物
+.locust*
+__pycache__/

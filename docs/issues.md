@@ -87,7 +87,7 @@
 
 | 告警 | 说明 | 处理计划 |
 | --- | --- | --- |
-| `InsecureKeyLengthWarning` | `JWT_SECRET`（23 字节）< 32 字节（RFC 7518 推荐） | 生产部署前换 ≥32 字节随机串 |
+| ~~`InsecureKeyLengthWarning`~~ | ~~`JWT_SECRET`（23 字节）< 32 字节~~ | **已处理**：`.env` 换 48 字节随机串，CI 注入 35 字节 |
 | `StarletteDeprecationWarning` | starlette testclient 提示安装 httpx2 | 上游变动，关注升级节奏 |
 | conda 25.9.1 偶发内部崩溃报告 | conda run 退出时报错但命令实际已执行 | 用 env 目录直调绕开 |
 | gh CLI 未安装 | 仓库创建走网页 | 如需自动化发布再装 |

@@ -120,14 +120,65 @@ celery -A app.core.celery_app:celery_app worker --pool=solo -l info
 
 ```bash
 # 后端（需 MySQL / Redis / Qdrant 本机服务 + init.sql 已执行）
-pytest tests -q
-ruff check backend tests
+pytest tests -q --cov=app --cov-report=term   # 44 个用例，覆盖率先 84%，CI 门禁 75%
+ruff check backend tests scripts
+
+# RAG 检索质量评估（内置 12 条标注用例，输出 recall@5 报告）
+python scripts/rag_eval.py --write            # 报告写入 docs/rag-eval.md
 
 # 前端构建验证
 cd frontend && npm run build
 ```
 
-每次 push 自动执行 GitHub Actions CI（后端 pytest + ruff、前端 vite build，含 MySQL/Redis/Qdrant 服务容器）。
+每次 push 自动执行 GitHub Actions CI（后端 ruff + pytest 覆盖率门禁 ≥75%、前端 vite build，含 MySQL/Redis/Qdrant 服务容器）。
+
+CI 中的 `tests/test_rag_eval.py` 是检索质量门禁：样例用例 hybrid recall@5 < 0.8 即失败，防止检索退化。
+
+### 数据库迁移（Alembic）
+
+新环境初始化二选一：
+
+```bash
+# 方式一：种子脚本（建表 + admin 账号，CI 采用此方式）
+mysql -u medical -p medical < docker/mysql/init.sql
+
+# 方式二：Alembic 迁移（仅建表；已有表时幂等跳过）
+cd backend && alembic upgrade head
+
+# 后续 schema 变更：改 models → autogenerate → review → upgrade
+alembic revision --autogenerate -m "add column"
+alembic upgrade head
+```
+
+### 性能压测
+
+Locust 混合场景（50 并发 × 60s：问诊对话 / 知识库检索 / 健康检查 / 用户信息，mock LLM）：
+
+| 指标 | 结果 |
+|---|---|
+| 总请求 / 失败 | 3896 / **0** |
+| 吞吐 | **65.7 RPS**（设计目标峰值 <50 满足） |
+| 延迟 P50 / P95 / P99 | **40ms / 560ms / 610ms** |
+| 分端点 P50 | chat 消息 520ms（含 mock 流式生成）、检索 12ms、健康检查 22ms |
+
+```bash
+# 复现（压测期间临时放大限流阈值：RATE_LIMIT_QPS=1000000）
+locust -f locustfile.py --headless -u 50 -r 10 -t 60s --csv=docs/benchmark/locust --host http://127.0.0.1:8000
+```
+
+原始结果见 `docs/benchmark/locust_*.csv`。
+
+### 可观测性
+
+- **结构化 JSON 日志**：每行含 `traceId`（contextvar 贯穿，跨异步任务隔离），`LOG_JSON=false` 切回文本格式
+- **全链路 traceId**：请求入口生成/透传，响应头 `X-Trace-Id`、`X-Cost-Ms`，同步落 `audit_log` 表（`GET /monitor/log` 可按 traceId 检索）
+- **Prometheus 指标**：`GET /api/v1/monitor/metrics`（admin token），暴露 `http_requests_total`、`http_request_duration_seconds`、`llm_calls_total`、`llm_tokens_total`、`rag_queries_total`、`cache_ops_total` 等
+- **用量与审计**：`GET /monitor/llm/cost` 按 api_type 聚合 token 与费用
+
+### 限流与缓存
+
+- **滑动窗口限流**：Redis ZSET 实现（消除固定窗口临界突刺），按登录用户 / 客户端 IP 维度，默认 10 QPS，超限 429；Redis 不可用时降级放行
+- **两级缓存**：embedding 结果缓存（7 天，内容不可变）+ RAG 检索结果缓存（60s TTL）；知识库入库/启停时同步失效（BM25 索引 + 结果缓存）
 
 ### 部署教程
 
