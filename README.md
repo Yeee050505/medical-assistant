@@ -26,6 +26,7 @@
 - 后端：Python3.12、FastAPI、Celery（RAG 异步入库 + beat 定时任务）、Redis
 - 数据库：MySQL8.0、Qdrant 向量库
 - RAG：BM25 + 向量混合检索（RRF 融合）、embedding Provider 可切换（mock / OpenAI 兼容 API）
+- 智能链路：意图路由（qa/chat/followup/image/other）+ 热点缓存（人工词表 + 自动积累）
 - 前端：Vue3 + Element Plus（SSE 流式渲染）
 - 部署：Nginx 反代 + uvicorn / Celery worker，可观测：用量统计 + 审计日志 + Prometheus
 
@@ -78,20 +79,49 @@ sequenceDiagram
     participant L as 大模型 API
     F->>A: POST /chat/session/{id}/message (Accept: text/event-stream)
     A->>A: 滑动窗口限流 → 生成 traceId
-    A->>L: rewrite_query（结合近 3 轮历史）
-    A->>R: 查检索结果缓存(60s)
-    alt 缓存未命中
-        A->>Q: 向量召回 top40(过阈值) + BM25 top40
-        Q-->>A: RRF(k=60) 融合 top5
-        A->>R: 回写缓存
+    A->>A: 意图分类（rule/llm，异常兜底 qa）
+    A-->>F: event: intent
+    alt 命中热点（人工词表 / 自动积累）
+        A-->>F: event: hot + event: delta（预置回答）
+        A->>A: 落库 chat_message + usage(api_type=hot)
+    else 未命中
+        A->>L: rewrite_query（结合近 3 轮历史）
+        A->>R: 查检索结果缓存(60s)
+        alt 缓存未命中
+            A->>Q: 向量召回 top40(过阈值) + BM25 top40
+            Q-->>A: RRF(k=60) 融合 top5
+            A->>R: 回写缓存
+        end
+        A->>A: 组装 prompt（免责+片段）+ 外发脱敏
+        loop 流式生成
+            A-->>F: event: delta
+        end
+        A-->>F: event: done
+        A->>A: 落库 chat_message + llm_usage + audit_log
+        A->>R: 自动积累热点（TTL 24h）
     end
-    A->>A: 组装 prompt（免责+片段）+ 外发脱敏
-    loop 流式生成
-        A-->>F: event: delta
-    end
-    A-->>F: event: done
-    A->>A: 落库 chat_message + llm_usage + audit_log
 ```
+
+### 意图路由与热点缓存
+
+**意图路由**（`services/intent.py`，`INTENT_STRATEGY` 配置）：
+
+| 意图 | 判定 | 链路差异 |
+|---|---|---|
+| image | 请求带图片 | VL 解析 + 检索 + 生成 |
+| chat | 整句问候/寒暄 | 跳过 RAG，直接 LLM |
+| qa | 药学/症状关键词 | 检索 + 生成 |
+| followup | 有历史 + 追问指示词 | 强制 query 改写 + 检索 |
+| other | 兜底（分类失败同落此） | 同 qa |
+
+策略：`rule`（默认，零成本）/ `llm`（小模型分类，失败回退规则）/ `off`（恒 qa 保持旧行为）。分类结果经 SSE `intent` 事件透出，界面显示徽标。
+
+**热点缓存**（`services/hot_cache.py`，`HOT_CACHE_ENABLED`）：
+
+- 人工词表：MySQL `hot_topic`（同义词组任一命中即返回，priority 高者优先），预置流感特效药/布洛芬/蒙脱石散，admin 可通过 `/monitor/hot-topic` CRUD
+- 自动积累：qa 链路成功回答按归一化 query 存 Redis（TTL 24h），精确匹配命中
+- 命中后跳过 RAG 与 LLM 生成（零延迟零成本），仍落库会话历史，用量记 `api_type=hot`；SSE 发 `hot` 事件，界面显示「热点回答」徽标
+- 任何缓存异常降级走原链路，不影响可用性
 
 ### 环境依赖
 
@@ -191,7 +221,7 @@ python scripts/seed_demo.py
 
 ```bash
 # 后端（需 MySQL / Redis / Qdrant 本机服务 + init.sql 已执行）
-pytest tests -q --cov=app --cov-report=term   # 63 个用例，覆盖率 88%，CI 门禁 75%
+pytest tests -q --cov=app --cov-report=term   # 88 个用例，覆盖率 87%，CI 门禁 75%
 ruff check backend tests scripts               # lint
 mypy                                           # 类型检查（44 文件 0 错误）
 

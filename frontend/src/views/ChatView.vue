@@ -28,6 +28,17 @@
             :class="m.role === 'user' ? 'mine' : 'theirs'"
           >
             <div class="bubble">
+              <div
+                v-if="m.role === 'assistant' && (m.intent || m.hotTitle)"
+                class="meta-badges"
+              >
+                <el-tag v-if="m.hotTitle" size="small" type="warning">
+                  热点回答 · {{ m.hotTitle }}
+                </el-tag>
+                <el-tag v-else-if="intentLabel(m.intent)" size="small" type="info">
+                  {{ intentLabel(m.intent) }}
+                </el-tag>
+              </div>
               <div class="content" style="white-space: pre-wrap">{{ m.content }}</div>
               <el-collapse v-if="m.referenceDocs?.length" class="refs">
                 <el-collapse-item title="参考药品说明书片段">
@@ -107,6 +118,17 @@ const imageList = ref([])
 const sending = ref(false)
 const msgBox = ref(null)
 
+const INTENT_LABELS = {
+  qa: '用药咨询',
+  chat: '闲聊对话',
+  followup: '追问',
+  image: '图片解读',
+}
+
+function intentLabel(v) {
+  return INTENT_LABELS[v] || ''
+}
+
 async function loadSessions() {
   try {
     const res = await request.get('/chat/session/list', { params: { size: 50 } })
@@ -176,13 +198,28 @@ async function send() {
         role: 'assistant',
         content: res.data.answer,
         referenceDocs: res.data.referenceDocs || [],
+        intent: res.data.intent,
+        hotTitle: res.data.hotTitle || '',
       })
       await loadSessions()
     } else {
-      const bubble = { role: 'assistant', content: '', referenceDocs: [], streaming: true }
+      const bubble = {
+        role: 'assistant',
+        content: '',
+        referenceDocs: [],
+        streaming: true,
+        intent: '',
+        hotTitle: '',
+      }
       messages.value.push(bubble)
       let acc = ''
       await streamChat(currentId.value, body, {
+        intent: (d) => {
+          bubble.intent = d.intent || ''
+        },
+        hot: (d) => {
+          bubble.hotTitle = d.title || ''
+        },
         delta: (d) => {
           acc += d.content
           bubble.content = acc
@@ -191,6 +228,7 @@ async function send() {
         done: (d) => {
           bubble.streaming = false
           bubble.referenceDocs = d.referenceDocs || []
+          if (d.hotTitle) bubble.hotTitle = d.hotTitle
         },
         error: (d) => {
           bubble.streaming = false
@@ -292,6 +330,9 @@ onMounted(loadSessions)
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.meta-badges {
+  margin-bottom: 6px;
 }
 .mine .bubble {
   background: #409eff;
