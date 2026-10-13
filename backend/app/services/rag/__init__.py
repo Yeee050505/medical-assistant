@@ -1,10 +1,15 @@
 import logging
+import time
 
 from app.core.config import settings
+from app.core.metrics import RAG_LATENCY, RAG_QUERIES
 from app.services.llm.factory import get_provider
 from app.services.rag.bm25 import _rrf_key, bm25_search
-from app.services.rag.embeddings import get_embedding_provider
+from app.services.rag.embeddings import embed_texts
+from app.services.rag.ingest import invalidate_retrieval
 from app.services.rag.store import search_points
+
+__all__ = ["search_chunks", "invalidate_retrieval"]
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +34,22 @@ def search_chunks(
     top_k: int | None = None,
     history: list[str] | None = None,
 ) -> list[dict]:
-    """混合检索：query 改写 → 向量召回(过相关性阈值) + BM25 关键词召回 → RRF 融合。"""
+    """混合检索：query 改写 → 结果缓存 → 向量+BM25 双路召回 → RRF 融合。"""
     top_k = top_k or settings.rag_top_k
+    start = time.perf_counter()
     try:
         rewritten = _rewrite(query, history)
 
-        vector = get_embedding_provider().embed([rewritten])[0]
+        from app.services.cache import cache_json_get, cache_json_set, make_key
+
+        cache_key = make_key(rewritten, str(top_k), str(settings.rag_min_score))
+        cached = cache_json_get("rag", cache_key)
+        if cached is not None:
+            RAG_QUERIES.labels(result="cache").inc()
+            RAG_LATENCY.observe(time.perf_counter() - start)
+            return cached
+
+        vector = embed_texts([rewritten])[0]
         vec_points = search_points(vector, _CANDIDATES)
         vec_hits = [
             (p.payload, float(p.score))
@@ -58,7 +73,7 @@ def search_chunks(
             _add(payload, rank, None)
 
         ordered = sorted(fused.values(), key=lambda e: e["rrf"], reverse=True)[:top_k]
-        return [
+        result = [
             {
                 "docId": e["payload"].get("doc_id", ""),
                 "drugName": e["payload"].get("drug_name", ""),
@@ -67,6 +82,12 @@ def search_chunks(
             }
             for e in ordered
         ]
+        RAG_QUERIES.labels(result="hit" if result else "miss").inc()
+        RAG_LATENCY.observe(time.perf_counter() - start)
+        cache_json_set("rag", cache_key, result, settings.cache_rag_ttl)
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("RAG 检索失败，降级返回空: %s", exc)
+        RAG_QUERIES.labels(result="error").inc()
+        RAG_LATENCY.observe(time.perf_counter() - start)
         return []

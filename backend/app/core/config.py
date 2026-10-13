@@ -34,6 +34,14 @@ class Settings(BaseSettings):
 
     # 网关限流
     rate_limit_qps: int = 10
+    rate_limit_window_ms: int = 1000  # 滑动窗口长度
+
+    # 日志
+    log_json: bool = True
+
+    # 缓存 TTL（秒）
+    cache_embedding_ttl: int = 7 * 24 * 3600
+    cache_rag_ttl: int = 60
 
     # Embedding / RAG
     embedding_provider: str = "mock"

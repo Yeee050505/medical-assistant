@@ -1,4 +1,5 @@
 import time
+import uuid
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
@@ -12,11 +13,15 @@ EXEMPT_PATHS = {"/api/v1/health"}
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """网关限流：固定窗口 1s 计数，按登录用户（token sub）或客户端 IP 维度，超限 429。"""
+    """网关限流：Redis ZSET 滑动窗口，按登录用户（token sub）或客户端 IP 维度，超限 429。
 
-    def __init__(self, app, qps: int | None = None):
+    相比固定窗口，滑动窗口消除窗口边界的临界突刺（边界处最多放行 2×qps 的问题）。
+    """
+
+    def __init__(self, app, qps: int | None = None, window_ms: int | None = None):
         super().__init__(app)
-        self.qps = qps or settings.rate_limit_qps
+        self.qps = qps if qps is not None else settings.rate_limit_qps
+        self.window_ms = window_ms if window_ms is not None else settings.rate_limit_window_ms
         self._redis: aioredis.Redis | None = None
 
     def _client(self) -> aioredis.Redis:
@@ -42,23 +47,36 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
         return f"ip{client_ip}"
 
+    async def _allow(self, identity: str, now: float | None = None) -> bool:
+        """滑动窗口判定：窗口内计数 <= qps 放行。now 可注入（测试窗口滑动）。"""
+        now = now if now is not None else time.time()
+        key = f"rl:{identity}"
+        window_start = now - self.window_ms / 1000
+        member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
+        try:
+            pipe = self._client().pipeline()
+            pipe.zremrangebyscore(key, "-inf", window_start)
+            pipe.zadd(key, {member: now})
+            pipe.zcard(key)
+            pipe.expire(key, max(2, self.window_ms // 1000 + 1))
+            results = await pipe.execute()
+            count = int(results[2])
+        except Exception:  # noqa: BLE001
+            return True  # Redis 不可用时放行，避免误伤业务
+
+        if count > self.qps:
+            try:
+                await self._client().zrem(key, member)  # 超限请求不占坑
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+        return True
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
-        window = int(time.time())
-        key = f"rl:{self._identity(request)}:{window}"
-        try:
-            r = self._client()
-            count = await r.incr(key)
-            if count == 1:
-                await r.expire(key, 2)
-        except Exception:
-            count = 0  # Redis 不可用时放行，避免误伤业务
-
-        if count > self.qps:
-            import uuid
-
+        if not await self._allow(self._identity(request)):
             trace_id = getattr(request.state, "trace_id", uuid.uuid4().hex)
             return JSONResponse(
                 status_code=429,

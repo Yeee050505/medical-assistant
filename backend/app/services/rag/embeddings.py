@@ -129,3 +129,36 @@ def get_embedding_provider() -> EmbeddingProvider:
     if settings.embedding_provider == "mock" or not settings.embedding_api_key:
         return MockEmbedding()
     return OpenAICompatEmbedding()
+
+
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """带 Redis 缓存的 embedding：逐条命中则复用，未命中回源并回写（内容不可变，无需失效）。"""
+    import json
+
+    from app.services.cache import cache_get, cache_set, make_key
+
+    if not texts:
+        return []
+    provider = get_embedding_provider()
+    results: list[list[float] | None] = [None] * len(texts)
+    missing: list[int] = []
+    for i, text in enumerate(texts):
+        raw = cache_get("emb", make_key(provider.name, str(provider.dim), text))
+        if raw:
+            try:
+                results[i] = json.loads(raw)
+                continue
+            except ValueError:
+                pass
+        missing.append(i)
+    if missing:
+        vectors = provider.embed([texts[i] for i in missing])
+        for pos, i in enumerate(missing):
+            results[i] = vectors[pos]
+            cache_set(
+                "emb",
+                make_key(provider.name, str(provider.dim), texts[i]),
+                json.dumps(vectors[pos]),
+                settings.cache_embedding_ttl,
+            )
+    return results  # type: ignore[return-value]

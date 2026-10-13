@@ -163,14 +163,14 @@ def doc_status(
     row.enabled = enabled
     db.commit()
 
-    from app.services.rag.bm25 import invalidate
+    from app.services.rag.ingest import invalidate_retrieval
     from app.services.rag.store import set_doc_enabled
 
     try:
         set_doc_enabled(body.docId, bool(enabled))
     except Exception as exc:  # noqa: BLE001
         logger.warning("同步 Qdrant 启用状态失败 doc=%s: %s", body.docId, exc)
-    invalidate()
+    invalidate_retrieval()
     return success(request, {"docId": row.doc_id, "status": body.status})
 
 
