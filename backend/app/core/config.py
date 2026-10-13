@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # MySQL
-    mysql_host: str = "localhost"
+    mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
     mysql_user: str = "medical"
     mysql_password: str = "medical123"
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Redis
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
-    redis_password: str = "redis123"
+    redis_password: str = ""
 
     # Qdrant
     qdrant_url: str = "http://127.0.0.1:6333"
@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     vl_model: str = ""
     llm_price_prompt: float = 0.0  # 元 / 1K tokens
     llm_price_completion: float = 0.0  # 元 / 1K tokens
+    llm_daily_token_quota: int = 0  # 每日 token 配额（0=不告警）
 
     # storage
     upload_dir: str = "./data/uploads"

@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.deps import require_permission
 from app.core.metrics import metrics_payload
 from app.core.response import bad_request, success
-from app.models.monitor import AuditLog, LlmUsage
+from app.models.monitor import AuditLog, LlmUsage, LlmUsageDaily
 
 router = APIRouter()
 
@@ -36,6 +36,45 @@ def _apply_date_range(column, startDate: str, endDate: str, conds: list) -> None
             conds.append(column < day)
         else:
             conds.append(column >= day)
+
+
+@router.get("/usage/daily")
+def daily_usage(
+    request: Request,
+    startDate: str = "",
+    endDate: str = "",
+    user: dict = Depends(require_permission("monitor:admin")),
+    db: Session = Depends(get_db),
+):
+    """每日用量聚合（Celery beat 汇总）。"""
+    conds: list = []
+    _apply_date_range(LlmUsageDaily.stat_date, startDate, endDate, conds)
+    rows = list(
+        db.execute(
+            select(LlmUsageDaily)
+            .where(*conds)
+            .order_by(desc(LlmUsageDaily.stat_date), LlmUsageDaily.api_type)
+            .limit(120)
+        ).scalars()
+    )
+    return success(
+        request,
+        {
+            "list": [
+                {
+                    "statDate": r.stat_date.isoformat(),
+                    "apiType": r.api_type,
+                    "calls": r.calls,
+                    "promptTokens": r.prompt_tokens,
+                    "completionTokens": r.completion_tokens,
+                    "totalTokens": r.prompt_tokens + r.completion_tokens,
+                    "cost": float(r.cost),
+                    "avgDurationMs": r.avg_duration_ms,
+                }
+                for r in rows
+            ]
+        },
+    )
 
 
 @router.get("/llm/cost")

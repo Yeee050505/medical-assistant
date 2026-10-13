@@ -113,6 +113,23 @@ CREATE TABLE IF NOT EXISTS file_object (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 默认账号：admin / Admin@123（bcrypt 散列，部署后请立即修改）
+
+-- 每日用量聚合（Celery beat）
+CREATE TABLE IF NOT EXISTS llm_usage_daily (
+  id                 BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  stat_date          DATE NOT NULL,
+  api_type           VARCHAR(16) NOT NULL DEFAULT 'llm',
+  calls              INT NOT NULL DEFAULT 0,
+  prompt_tokens      INT NOT NULL DEFAULT 0,
+  completion_tokens  INT NOT NULL DEFAULT 0,
+  cost               DECIMAL(12,6) NOT NULL DEFAULT 0,
+  avg_duration_ms    INT NOT NULL DEFAULT 0,
+  created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_date_api (stat_date, api_type),
+  KEY idx_stat_date (stat_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 INSERT INTO sys_user (username, password_hash, role)
 VALUES ('admin', '$2b$12$KRyUQR8ScBAZvRJ5vgLyZ.gyefUl6gQiS8YfsIR.TtXwAhnAALMtm', 'admin')
 ON DUPLICATE KEY UPDATE username = username;
