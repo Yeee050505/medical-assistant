@@ -1,4 +1,3 @@
-import logging
 from contextlib import asynccontextmanager
 
 import httpx
@@ -10,12 +9,10 @@ from app.api import auth, chat, file, monitor, rag
 from app.core.config import settings
 from app.core.database import check_mysql
 from app.core.gateway import install_gateway_middlewares
+from app.core.logging import setup_logging
 from app.core.response import http_exception_handler
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+setup_logging(settings.log_json)
 
 
 @asynccontextmanager

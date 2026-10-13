@@ -1,15 +1,26 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import require_permission
+from app.core.metrics import metrics_payload
 from app.core.response import bad_request, success
 from app.models.monitor import AuditLog, LlmUsage
 
 router = APIRouter()
+
+
+@router.get("/metrics")
+def prometheus_metrics(
+    request: Request,
+    user: dict = Depends(require_permission("monitor:admin")),
+):
+    """Prometheus 抓取端点（Authorization 携带 admin token）。"""
+    return Response(metrics_payload(), media_type=CONTENT_TYPE_LATEST)
 
 
 def _apply_date_range(column, startDate: str, endDate: str, conds: list) -> None:

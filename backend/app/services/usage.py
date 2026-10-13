@@ -28,6 +28,11 @@ def record_usage(
         cost = prompt_tokens / 1000 * float(
             settings.llm_price_prompt
         ) + completion_tokens / 1000 * float(settings.llm_price_completion)
+        from app.core.metrics import LLM_CALLS, LLM_TOKENS
+
+        LLM_CALLS.labels(api_type=api_type, status=status).inc()
+        LLM_TOKENS.labels(api_type=api_type, kind="prompt").inc(prompt_tokens)
+        LLM_TOKENS.labels(api_type=api_type, kind="completion").inc(completion_tokens)
         with SessionLocal() as db:
             db.add(
                 LlmUsage(
