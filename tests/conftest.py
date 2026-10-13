@@ -12,12 +12,17 @@ BASE = "/api/v1"
 
 @pytest.fixture(autouse=True)
 def _clean_rag_cache():
-    """每个测试前清空 RAG 结果缓存，防止跨测试用例污染。"""
+    """每个测试前清空 RAG 结果缓存与热点自动积累，防止跨测试用例污染。"""
     from app.services.cache import cache_clear
+    from app.services.hot_cache import invalidate_topics
 
     cache_clear("rag")
+    cache_clear("hotauto")
+    invalidate_topics()
     yield
     cache_clear("rag")
+    cache_clear("hotauto")
+    invalidate_topics()
 
 
 @pytest.fixture()

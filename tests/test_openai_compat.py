@@ -119,3 +119,19 @@ def test_stream_chat_propagates_http_error(monkeypatch):
     monkeypatch.setattr(httpx, "stream", fake_stream)
     with pytest.raises(httpx.HTTPStatusError):
         list(_provider().stream_chat([{"role": "user", "content": "x"}]))
+
+
+def test_classify_intent_payload_and_parse(monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"message": {"content": " QA \n"}}]})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    out = _provider().classify_intent("布洛芬怎么吃", ["最近头疼"])
+    assert out == "qa"
+    assert captured["payload"]["max_tokens"] == 10
+    assert captured["payload"]["temperature"] == 0.0
+    user_msg = captured["payload"]["messages"][1]["content"]
+    assert "最近头疼" in user_msg and "布洛芬怎么吃" in user_msg
